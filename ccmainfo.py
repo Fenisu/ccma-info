@@ -1,4 +1,4 @@
-#!/usr/bin/python
+﻿# -*- coding: utf-8 -*-
 import argparse
 import bs4
 import json
@@ -6,20 +6,23 @@ import logging
 import requests
 import re
 import sys
+import xmltodict
 
 TMP_FILE = 'ccmainfo.json'
 
 TITLE = "Títol"
+PRIMERA_EMISSIO = "Primera emissió"
+EMISSIO_ACTUAL = "Emissió actual"
 INFO_LINK = "Info"
 HQ_VIDEO = "HQ"
 MQ_VIDEO = "MQ"
-SUBTITLE_1 = "Subs1"
-SUBTITLE_2 = "Subs2"
+SUBTITLE_1 = "VTT"
+SUBTITLE_2 = "XML"
 
 
 name_urlbase = "http://www.tv3.cat/pvideo/FLV_bbd_dadesItem_MP4.jsp?idint="
-hq_urlbase = "http://www.tv3.cat/pvideo/FLV_bbd_media.jsp?QUALITY=H&PROFILE=IPTV&FORMAT=MP4GES&ID="
-subs1_urlbase = "http://dinamics.ccma.cat/pvideo/media.jsp?media=video&version=0s&profile=tv&idint="
+hq_urlbase = "http://www.tv3.cat/pvideo/FLV_bbd_media.jsp?PROFILE=IPTV&FORMAT=MP4GES&ID="
+subs1_urlbase = "http://www.tv3.cat/pvideo/media.jsp?media=video&versio=1&profile=pc&broadcast=false&format=dm&idint="
 subs2_urlbase = "http://www.tv3.cat/p3ac/p3acOpcions.jsp?idint="
 
 SUPER3_URL = "www.ccma.cat/tv3/super3/"
@@ -106,14 +109,15 @@ def main():
     html_doc = requests.get(url).text
     soup = bs4.BeautifulSoup(html_doc, 'html.parser')
     logger.info("Analitzant l'URL {}".format(url))
+    id_cap = str(re.split("/", url)[-2])
     try:
         capis_meta = soup.find_all('a', class_=parse_filter)
         for capi_meta in capis_meta:
             p = re.compile('/video/([0-9]{7})/$')
             capis.append(p.search(capi_meta['href']).group(1))
     except:
-        logger.error("No s'ha pogut analitzar l'URL")
-        sys.exit(2)
+        id_cap = str(re.split("/", url)[-2])
+        capis.append(id_cap)
 
     capis.reverse()
     first_run = True
@@ -122,8 +126,7 @@ def main():
         logger.debug("Aconseguint l'ID:{}".format(capi))
         try:
             html_doc = requests.get(subs1_urlbase + capi).text
-            soup = bs4.BeautifulSoup(html_doc, 'html.parser')
-            j = json.loads(soup.text)
+            j = json.loads(html_doc)
             show = j['informacio']['programa']
         except:
             logger.error("Alguna cosa ha sortit molt malament, no es pot analitzar el segon nivell d'URL.")
@@ -145,31 +148,44 @@ def main():
         logger.debug("Aconseguint diverses dades.")
         # HEADER
         try:
-            txt_file.append("{} {} ({})".format(show, j['informacio']['capitol'],
-                                           j['audiencies']['kantarst']['parametres']['ns_st_ddt']))
+            txt_file.append("{} ({})".format(show, j['informacio']['capitol']))
         except KeyError:
-            try:
-                txt_file.append("{} {}".format(show, j['informacio']['capitol']))
-            except KeyError:
-                txt_file.append(show)
-        # INFO
-        txt_file.append("{}: {}".format(INFO_LINK, "{}{}".format(name_urlbase, capi)))
+            txt_file.append(show)
 
         # TITLE
         try:
             html_doc = requests.get(name_urlbase + capi).text
-            soup = bs4.BeautifulSoup(html_doc, 'html.parser')
-            txt_file.append("{}: {}".format(TITLE, soup.title.text))
+            html_doc_dict = xmltodict.parse(html_doc)
+            html_doc_dict = json.dumps(html_doc_dict)
+            html_doc_json = json.loads(html_doc_dict)
+            txt_file.append("{}: {}".format(TITLE, html_doc_json['item']['title']))
         except:
             pass
+        # PRIMERA_EMISSIO
+        try:
+            txt_file.append("{}: {}".format(PRIMERA_EMISSIO, j['informacio']['data_emissio']['text']))
+        except:
+            pass
+        # EMISSIO_ACTUAL
+        try:
+            txt_file.append("{}: {}".format(EMISSIO_ACTUAL, j['audiencies']['kantarst']['parametres']['ns_st_ddt']))
+        except:
+            pass
+        # INFO
+        txt_file.append("{}: {}".format(INFO_LINK, "{}{}".format(name_urlbase, capi)))
         # MQ
         try:
-            txt_file.append("{}: {}".format(MQ_VIDEO, soup.file.text))
+            for x in html_doc_json['item']['videos']['video']:
+                try:
+                    txt_file.append("{}: {}".format(x['format'], x['file']['#text']))
+                except Exception:
+                    continue
         except:
             pass
         # HQ
         try:
-            txt_file.append("{}: {}".format(HQ_VIDEO, j['media']['url']))
+            for x in j['media']['url']:
+                txt_file.append("{}: {}".format(x['label'], x['file']))
         except KeyError:
             pass
         # SUBS1
